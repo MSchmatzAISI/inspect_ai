@@ -208,6 +208,7 @@ def openai_responses_chat_choices(
 
 class _AssistantInternal(TypedDict):
     output_message_id: str | None
+    tool_message_id: str | None
     reasoning_id: str | None
 
 
@@ -237,7 +238,9 @@ def _chat_message_assistant_from_openai_response(
     # collect output and tool calls
     message_content: list[Content] = []
     tool_calls: list[ToolCall] = []
-    internal = _AssistantInternal(output_message_id=None, reasoning_id=None)
+    internal = _AssistantInternal(
+        output_message_id=None, reasoning_id=None, tool_message_id=None
+    )
     for output in response.output:
         match output:
             case ResponseOutputMessage(content=content, id=id):
@@ -260,7 +263,11 @@ def _chat_message_assistant_from_openai_response(
             case _:
                 stop_reason = "tool_calls"
                 match output:
-                    case ResponseFunctionToolCall():
+                    case ResponseFunctionToolCall(id=id):
+                        assert internal["tool_message_id"] is None, (
+                            "Multiple tool calls"
+                        )
+                        internal["tool_message_id"] = id
                         tool_calls.append(
                             parse_tool_call(
                                 output.call_id,
@@ -269,7 +276,11 @@ def _chat_message_assistant_from_openai_response(
                                 tools,
                             )
                         )
-                    case ResponseComputerToolCall():
+                    case ResponseComputerToolCall(id=id):
+                        assert internal["tool_message_id"] is None, (
+                            "Multiple tool calls"
+                        )
+                        internal["tool_message_id"] = id
                         tool_calls.append(
                             tool_call_from_openai_computer_tool_call(output)
                         )
@@ -305,7 +316,9 @@ def _openai_input_items_from_chat_message_assistant(
     reasoning_item: ResponseReasoningItemParam | None = None
     output_message: ResponseOutputMessageParam | None = None
 
-    (output_message_id, reasoning_id) = _ids_from_assistant_internal(message)
+    (output_message_id, reasoning_id, tool_message_id) = _ids_from_assistant_internal(
+        message
+    )
 
     for content in (
         list[ContentText | ContentReasoning]([ContentText(text=message.content)])
@@ -347,7 +360,7 @@ def _openai_input_items_from_chat_message_assistant(
 
     return [
         item for item in (reasoning_item, output_message) if item
-    ] + _tool_call_items_from_assistant_message(message)
+    ] + _tool_call_items_from_assistant_message(message, tool_message_id)
 
 
 def _model_tool_call_for_internal(
@@ -381,8 +394,13 @@ def _maybe_native_tool_param(
 
 def _tool_call_items_from_assistant_message(
     message: ChatMessageAssistant,
+    message_id: str | None = None,
 ) -> list[ResponseInputItemParam]:
     tool_calls: list[ResponseInputItemParam] = []
+    if message_id:
+        assert len(message.tool_calls) == 1, (
+            "mjs: Multiple tool calls not supported in this context"
+        )
     for call in message.tool_calls or []:
         if isinstance(call.internal, dict):
             tool_calls.append(
@@ -398,6 +416,7 @@ def _tool_call_items_from_assistant_message(
                     call_id=call.id,
                     name=call.function,
                     arguments=call.function,
+                    id=message_id,
                 )
             )
 
@@ -406,12 +425,16 @@ def _tool_call_items_from_assistant_message(
 
 def _ids_from_assistant_internal(
     message: ChatMessageAssistant,
-) -> tuple[str | None, str | None]:
-    assert isinstance(message.internal, dict), (
+) -> tuple[str | None, str | None, str | None]:
+    assert isinstance(message.internal, dict), (q
         "OpenAI ChatMessageAssistant internal must be an _AssistantInternal"
     )
     internal = cast(_AssistantInternal, message.internal)
-    return (internal["output_message_id"], internal["reasoning_id"])
+    return (
+        internal["output_message_id"],
+        internal["reasoning_id"],
+        internal["tool_message_id"],
+    )
 
 
 _ResponseToolCallParam = (

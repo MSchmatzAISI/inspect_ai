@@ -41,6 +41,7 @@ async def generate_responses(
     tools: list[ToolInfo],
     tool_choice: ToolChoice,
     config: GenerateConfig,
+    store_responses: bool = False,
 ) -> ModelOutput | tuple[ModelOutput | Exception, ModelCall]:
     # allocate request_id (so we can see it from ModelCall)
     request_id = http_hooks.start_request()
@@ -68,7 +69,9 @@ async def generate_responses(
         else NOT_GIVEN,
         truncation="auto" if is_computer_use_preview(model_name) else NOT_GIVEN,
         extra_headers={HttpxHooks.REQUEST_ID_HEADER: request_id},
-        **completion_params_responses(model_name, config, len(tools) > 0),
+        **completion_params_responses(
+            model_name, config, len(tools) > 0, store_responses
+        ),
     )
 
     try:
@@ -110,7 +113,7 @@ async def generate_responses(
 
 
 def completion_params_responses(
-    model_name: str, config: GenerateConfig, tools: bool
+    model_name: str, config: GenerateConfig, tools: bool, store_responses: bool
 ) -> dict[str, Any]:
     # TODO: we'll need a computer_use_preview bool for the 'include'
     # and 'reasoning' parameters
@@ -121,7 +124,7 @@ def completion_params_responses(
         )
 
     params: dict[str, Any] = dict(
-        model=model_name, store=is_computer_use_preview(model_name)
+        model=model_name, store=is_computer_use_preview(model_name) or store_responses
     )
     if config.max_tokens is not None:
         params["max_output_tokens"] = config.max_tokens
