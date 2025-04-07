@@ -426,7 +426,7 @@ def _tool_call_items_from_assistant_message(
 def _ids_from_assistant_internal(
     message: ChatMessageAssistant,
 ) -> tuple[str | None, str | None, str | None]:
-    assert isinstance(message.internal, dict), (q
+    assert isinstance(message.internal, dict), (
         "OpenAI ChatMessageAssistant internal must be an _AssistantInternal"
     )
     internal = cast(_AssistantInternal, message.internal)
