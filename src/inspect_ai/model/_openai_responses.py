@@ -255,10 +255,10 @@ def _chat_message_assistant_from_openai_response(
                     ]
                 )
             case ResponseReasoningItem(summary=summary, id=id):
-                assert internal["reasoning_id"] is None, "Multiple reasoning items"
-                internal["reasoning_id"] = id
                 message_content.append(
-                    ContentReasoning(reasoning="\n".join([s.text for s in summary]))
+                    ContentReasoning(
+                        signature=id, reasoning="\n".join([s.text for s in summary])
+                    )
                 )
             case _:
                 stop_reason = "tool_calls"
@@ -320,6 +320,8 @@ def _openai_input_items_from_chat_message_assistant(
         message
     )
 
+    reasoning_items = []
+
     for content in (
         list[ContentText | ContentReasoning]([ContentText(text=message.content)])
         if isinstance(message.content, str)
@@ -328,13 +330,15 @@ def _openai_input_items_from_chat_message_assistant(
         ]
     ):
         match content:
-            case ContentReasoning(reasoning=reasoning):
-                assert reasoning_item is None, "Multiple reasoning items"
-                assert reasoning_id is not None, "Must find reasoning id"
-                reasoning_item = ResponseReasoningItemParam(
-                    type="reasoning",
-                    id=reasoning_id,
-                    summary=[Summary(type="summary_text", text=reasoning)],
+            case ContentReasoning(reasoning=reasoning, signature=signature):
+                # assert reasoning_item is None, "Multiple reasoning items"
+                assert signature is not None, "Missing reasoning signature"
+                reasoning_items.append(
+                    ResponseReasoningItemParam(
+                        type="reasoning",
+                        id=signature,
+                        summary=[Summary(type="summary_text", text=reasoning)],
+                    )
                 )
             case ContentText(text=text, refusal=refusal):
                 new_content = (
@@ -359,7 +363,7 @@ def _openai_input_items_from_chat_message_assistant(
                     )
 
     return [
-        item for item in (reasoning_item, output_message) if item
+        item for item in reasoning_items + [output_message] if item
     ] + _tool_call_items_from_assistant_message(message, tool_message_id)
 
 
