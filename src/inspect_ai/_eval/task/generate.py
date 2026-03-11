@@ -6,6 +6,7 @@ from inspect_ai.model._cache import epoch
 from inspect_ai.model._call_tools import execute_tools
 from inspect_ai.solver import TaskState
 from inspect_ai.tool import ToolFunction
+from inspect_ai.util._sandbox._checkpoint_manager import maybe_checkpoint
 
 
 async def task_generate(
@@ -54,6 +55,9 @@ async def task_generate(
             # check for completed or only executing a single tool call
             if state.completed or tool_calls == "single":
                 return state
+
+            # checkpoint after each complete turn (model call + tool execution)
+            await maybe_checkpoint(state)
 
             # if a tool_call was forced set tool_choice to 'auto'
             # (otherwise it will get forced over and over again)

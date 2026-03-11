@@ -130,6 +130,11 @@ def eval(
     log_header_only: bool | None = None,
     run_samples: bool = True,
     score: bool = True,
+    checkpoint: bool | None = None,
+    checkpoint_interval_seconds: float | None = None,
+    checkpoint_dir: str | None = None,
+    checkpoint_max_keep: int | None = None,
+    resume_from_checkpoint: str | None = None,
     score_display: bool | None = None,
     eval_set_id: str | None = None,
     **kwargs: Unpack[GenerateConfigArgs],
@@ -219,6 +224,12 @@ def eval(
         run_samples: Run samples. If `False`, a log with `status=="started"` and an
             empty `samples` list is returned.
         score: Score output (defaults to True)
+        checkpoint: Enable periodic Docker CRIU checkpointing (defaults to False).
+        checkpoint_interval_seconds: Interval in seconds between checkpoints (defaults to 300).
+        checkpoint_dir: Directory for storing checkpoint data.
+        checkpoint_max_keep: Maximum checkpoints to keep per sample (defaults to 3).
+        resume_from_checkpoint: Path to a failed eval log to resume incomplete samples
+            from their last CRIU checkpoint.
         score_display: Show scoring metrics in realtime (defaults to True)
         eval_set_id: Unique id for eval set (this is passed from `eval_set()` and should not be specified directly).
         **kwargs: Model generation options.
@@ -280,6 +291,11 @@ def eval(
                 log_header_only=log_header_only,
                 run_samples=run_samples,
                 score=score,
+                checkpoint=checkpoint,
+                checkpoint_interval_seconds=checkpoint_interval_seconds,
+                checkpoint_dir=checkpoint_dir,
+                checkpoint_max_keep=checkpoint_max_keep,
+                resume_from_checkpoint=resume_from_checkpoint,
                 score_display=score_display,
                 eval_set_id=eval_set_id,
                 **kwargs,
@@ -342,6 +358,11 @@ async def eval_async(
     log_header_only: bool | None = None,
     run_samples: bool = True,
     score: bool = True,
+    checkpoint: bool | None = None,
+    checkpoint_interval_seconds: float | None = None,
+    checkpoint_dir: str | None = None,
+    checkpoint_max_keep: int | None = None,
+    resume_from_checkpoint: str | None = None,
     score_display: bool | None = None,
     eval_set_id: str | None = None,
     **kwargs: Unpack[GenerateConfigArgs],
@@ -412,6 +433,12 @@ async def eval_async(
         run_samples: Run samples. If `False`, a log with `status=="started"` and an
            empty `samples` list is returned.
         score: Score output (defaults to True)
+        checkpoint: Enable periodic Docker CRIU checkpointing (defaults to False).
+        checkpoint_interval_seconds: Interval in seconds between checkpoints (defaults to 300).
+        checkpoint_dir: Directory for storing checkpoint data.
+        checkpoint_max_keep: Maximum checkpoints to keep per sample (defaults to 3).
+        resume_from_checkpoint: Path to a failed eval log to resume incomplete samples
+            from their last CRIU checkpoint.
         score_display: Show scoring metrics in realtime (defaults to True)
         eval_set_id: Unique id for eval set (this is passed from `eval_set()` and should not be specified directly).
         **kwargs: Model generation options.
@@ -469,6 +496,11 @@ async def eval_async(
                 log_header_only=log_header_only,
                 run_samples=run_samples,
                 score=score,
+                checkpoint=checkpoint,
+                checkpoint_interval_seconds=checkpoint_interval_seconds,
+                checkpoint_dir=checkpoint_dir,
+                checkpoint_max_keep=checkpoint_max_keep,
+                resume_from_checkpoint=resume_from_checkpoint,
                 score_display=score_display,
                 eval_set_id=eval_set_id,
                 **kwargs,
@@ -536,6 +568,11 @@ async def _eval_async_inner(
     log_header_only: bool | None = None,
     run_samples: bool = True,
     score: bool = True,
+    checkpoint: bool | None = None,
+    checkpoint_interval_seconds: float | None = None,
+    checkpoint_dir: str | None = None,
+    checkpoint_max_keep: int | None = None,
+    resume_from_checkpoint: str | None = None,
     score_display: bool | None = None,
     eval_set_id: str | None = None,
     **kwargs: Unpack[GenerateConfigArgs],
@@ -703,8 +740,28 @@ async def _eval_async_inner(
             log_model_api=log_model_api,
             log_buffer=log_buffer,
             log_shared=log_shared,
+            checkpoint=checkpoint,
+            checkpoint_interval_seconds=checkpoint_interval_seconds,
+            checkpoint_dir=checkpoint_dir,
+            checkpoint_max_keep=checkpoint_max_keep,
             score_display=score_display,
         )
+
+        # set up checkpoint source if resuming from a crashed eval log
+        if resume_from_checkpoint:
+            from inspect_ai.log._checkpoint import (
+                build_checkpoint_source,
+                set_checkpoint_source,
+            )
+            from inspect_ai.log._file import read_eval_log
+
+            failed_log = read_eval_log(resume_from_checkpoint)
+            checkpoint_source_map = build_checkpoint_source(failed_log)
+            set_checkpoint_source(checkpoint_source_map)
+            log.info(
+                f"Loaded {len(checkpoint_source_map)} checkpoint(s) from "
+                f"{resume_from_checkpoint}"
+            )
 
         # run tasks - 2 codepaths, one for the traditional task at a time
         # (w/ optional multiple models) and the other for true multi-task
@@ -782,6 +839,12 @@ async def _eval_async_inner(
         await emit_run_end(eval_set_id, run_id, EvalLogs([]), e)
         _eval_async_running = False
         raise e
+    finally:
+        # clean up checkpoint source context variable
+        if resume_from_checkpoint:
+            from inspect_ai.log._checkpoint import set_checkpoint_source
+
+            set_checkpoint_source(None)
 
     # return logs
     return logs

@@ -482,6 +482,73 @@ class DockerSandboxEnvironment(SandboxEnvironment):
                 f"Service '{self._service} is not currently running.'"
             )
 
+    @classmethod
+    def supports_checkpoint(cls) -> bool:
+        return True
+
+    @override
+    async def checkpoint_create(
+        self,
+        name: str,
+        checkpoint_dir: str,
+        leave_running: bool = True,
+    ) -> bool:
+        from .checkpoint import docker_checkpoint_create
+
+        container_name = await self._resolve_container_name()
+        if not container_name:
+            return False
+        return await docker_checkpoint_create(
+            container=container_name,
+            name=name,
+            checkpoint_dir=checkpoint_dir,
+            leave_running=leave_running,
+        )
+
+    @override
+    async def checkpoint_restore(
+        self,
+        name: str,
+        checkpoint_dir: str,
+    ) -> bool:
+        from .checkpoint import docker_checkpoint_restore
+
+        container_name = await self._resolve_container_name()
+        if not container_name:
+            return False
+        return await docker_checkpoint_restore(
+            container=container_name,
+            name=name,
+            checkpoint_dir=checkpoint_dir,
+        )
+
+    @override
+    async def checkpoint_delete(
+        self,
+        name: str,
+        checkpoint_dir: str,
+    ) -> None:
+        from .checkpoint import docker_checkpoint_delete
+
+        container_name = await self._resolve_container_name()
+        if container_name:
+            await docker_checkpoint_delete(
+                container=container_name,
+                name=name,
+                checkpoint_dir=checkpoint_dir,
+            )
+
+    async def _resolve_container_name(self) -> str | None:
+        """Resolve the Docker container name for this sandbox's service."""
+        containers = await compose_ps(self._project, all=True)
+        for info in containers:
+            if info.get("Service", "") == self._service:
+                return info.get("Name", "")
+        logger.warning(
+            f"Cannot find container for service '{self._service}' in project"
+        )
+        return None
+
     def default_polling_interval(self) -> float:
         return 0.2
 

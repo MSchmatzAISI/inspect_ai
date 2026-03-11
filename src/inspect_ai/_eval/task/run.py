@@ -1,6 +1,7 @@
 import contextlib
 import functools
 import importlib
+import os
 import sys
 import time
 from copy import copy, deepcopy
@@ -47,6 +48,7 @@ from inspect_ai._util.working import (
 )
 from inspect_ai._view.notify import view_notify_eval
 from inspect_ai.dataset import Dataset, Sample
+from inspect_ai.event._checkpoint import CheckpointEvent
 from inspect_ai.event._error import ErrorEvent
 from inspect_ai.event._sample_init import SampleInitEvent
 from inspect_ai.event._sample_limit import SampleLimitEvent
@@ -415,6 +417,10 @@ async def task_run(options: TaskRunOptions) -> EvalLog:
                         error_retries=[],
                         time_limit=config.time_limit,
                         working_limit=config.working_limit,
+                        checkpoint_enabled=config.checkpoint is True,
+                        checkpoint_interval_seconds=config.checkpoint_interval_seconds,
+                        checkpoint_dir=config.checkpoint_dir,
+                        checkpoint_max_keep=config.checkpoint_max_keep,
                         semaphore=sample_semaphore,
                         eval_set_id=logger.eval.eval_set_id,
                         run_id=logger.eval.run_id,
@@ -639,6 +645,10 @@ async def task_run_sample(
     error_retries: list[EvalError],
     time_limit: int | None,
     working_limit: int | None,
+    checkpoint_enabled: bool = False,
+    checkpoint_interval_seconds: float | None = None,
+    checkpoint_dir: str | None = None,
+    checkpoint_max_keep: int | None = None,
     semaphore: anyio.Semaphore | None,
     eval_set_id: str | None,
     run_id: str,
@@ -677,6 +687,25 @@ async def task_run_sample(
             )
             await sample_complete(state.sample_id, state.epoch, sample_scores)
             return sample_scores
+
+    # if there is a checkpoint source, try to restore state from checkpoint
+    _pending_checkpoint_event: CheckpointEvent | None = None
+    if sample.id is not None:
+        from inspect_ai.log._checkpoint import get_checkpoint_event
+
+        checkpoint_event = get_checkpoint_event(sample.id, state.epoch)
+        if checkpoint_event is not None:
+            from inspect_ai.log._checkpoint import load_checkpoint_state_data
+            from inspect_ai.solver._task_state import restore_state_from_checkpoint
+
+            checkpoint_data = load_checkpoint_state_data(checkpoint_event.state_file)
+            state = restore_state_from_checkpoint(state, checkpoint_data)
+            _pending_checkpoint_event = checkpoint_event
+            py_logger.info(
+                f"Restored state from checkpoint {checkpoint_event.checkpoint_id} "
+                f"for sample {sample.id} epoch {state.epoch} "
+                f"({checkpoint_event.message_count} messages)"
+            )
 
     # copy variables that we may pass back to ourselves on a retry
     initial_state = deepcopy(state)
@@ -813,6 +842,54 @@ async def task_run_sample(
                     finally:
                         await init_span.__aexit__(None, None, None)
                         cleanup_span = None
+
+                    # restore containers from checkpoint if resuming
+                    if _pending_checkpoint_event is not None:
+                        from inspect_ai.util._sandbox.context import (
+                            sandbox_environments_context_var,
+                        )
+                        from inspect_ai.util._sandbox.events import (
+                            SandboxEnvironmentProxy,
+                        )
+
+                        environments = sandbox_environments_context_var.get(None)
+                        if environments:
+                            ckpt_map = _pending_checkpoint_event.container_checkpoints
+                            ckpt_dir = _pending_checkpoint_event.checkpoint_dir
+                            for svc_name, env in environments.items():
+                                raw_env = (
+                                    env._sandbox
+                                    if isinstance(env, SandboxEnvironmentProxy)
+                                    else env
+                                )
+                                checkpoint_name = ckpt_map.get(svc_name)
+                                if checkpoint_name and raw_env.supports_checkpoint():
+                                    await raw_env.checkpoint_restore(
+                                        name=checkpoint_name,
+                                        checkpoint_dir=ckpt_dir,
+                                    )
+
+                    # set up checkpoint manager if checkpointing is enabled
+                    if checkpoint_enabled:
+                        from inspect_ai.util._sandbox._checkpoint_manager import (
+                            setup_checkpoint_manager_from_sandbox,
+                        )
+
+                        ckpt_dir = (
+                            checkpoint_dir
+                            if checkpoint_dir
+                            else os.path.join(
+                                os.path.dirname(log_location),
+                                ".checkpoints",
+                            )
+                        )
+                        setup_checkpoint_manager_from_sandbox(
+                            sample_id=sample_id,
+                            epoch=state.epoch,
+                            checkpoint_dir=ckpt_dir,
+                            interval_seconds=checkpoint_interval_seconds or 300.0,
+                            max_keep=checkpoint_max_keep or 3,
+                        )
 
                     # record start time
                     start_time = time.monotonic()
@@ -1075,6 +1152,14 @@ async def task_run_sample(
         except Exception as ex:
             error, raise_error = handle_error(ex)
         finally:
+            # clear checkpoint manager context
+            if checkpoint_enabled:
+                from inspect_ai.util._sandbox._checkpoint_manager import (
+                    set_checkpoint_manager,
+                )
+
+                set_checkpoint_manager(None)
+
             # cleanup the task init span if required
             if cleanup_span is not None:
                 with anyio.CancelScope(shield=cancelled_error is not None):
@@ -1150,6 +1235,10 @@ async def task_run_sample(
             error_retries=copy(error_retries) + [error],
             time_limit=time_limit,
             working_limit=working_limit,
+            checkpoint_enabled=checkpoint_enabled,
+            checkpoint_interval_seconds=checkpoint_interval_seconds,
+            checkpoint_dir=checkpoint_dir,
+            checkpoint_max_keep=checkpoint_max_keep,
             semaphore=semaphore,
             eval_set_id=eval_set_id,
             run_id=run_id,

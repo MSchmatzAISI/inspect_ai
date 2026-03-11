@@ -30,6 +30,7 @@ from .exec_remote import (
 )
 from .limits import OutputLimitExceededError, SandboxEnvironmentLimits
 from .local import LocalSandboxEnvironment  # noqa: F401
+from .podman.podman import PodmanSandboxEnvironment  # noqa: F401
 from .registry import sandboxenv
 from .service import sandbox_service
 

@@ -480,6 +480,108 @@ def state_jsonable(state: TaskState | None = None) -> dict[str, Any]:
     return cast(dict[str, Any], jsonable)
 
 
+def state_checkpoint_data(state: TaskState) -> dict[str, Any]:
+    """Serialize TaskState fields needed for checkpoint/restore to a JSON-safe dict.
+
+    Args:
+        state: The TaskState to serialize.
+
+    Returns:
+        A JSON-safe dictionary containing messages, store, output, metadata,
+        completed status, scores, and choices.
+    """
+    state_data = dict(
+        messages=state.messages,
+        store=store_jsonable(state.store),
+        output=state.output,
+        metadata=state.metadata,
+        completed=state._completed,
+    )
+    if state.scores is not None:
+        state_data["scores"] = state.scores
+    if len(state.choices) > 0:
+        state_data["choices"] = [
+            dict(
+                value=c.value,
+                correct=c.correct,
+                original_position=c.original_position,
+            )
+            for c in state.choices
+        ]
+    jsonable = to_jsonable_python(
+        state_data,
+        exclude_none=True,
+        fallback=lambda _x: None,
+    )
+    return cast(dict[str, Any], jsonable)
+
+
+def restore_state_from_checkpoint(
+    state: TaskState, checkpoint_data: dict[str, Any]
+) -> TaskState:
+    """Overlay checkpoint data onto a TaskState (which already has tools set up).
+
+    Args:
+        state: A fresh TaskState with tools and other infrastructure already configured.
+        checkpoint_data: Data previously produced by state_checkpoint_data().
+
+    Returns:
+        The modified TaskState with checkpoint data applied.
+    """
+    from pydantic import TypeAdapter
+
+    from inspect_ai.model import ChatMessage, ModelOutput
+
+    _chat_message_adapter: TypeAdapter[ChatMessage] = TypeAdapter(ChatMessage)
+
+    if "messages" in checkpoint_data:
+        raw_messages = checkpoint_data["messages"]
+        messages: list[ChatMessage] = [
+            _chat_message_adapter.validate_python(m) if isinstance(m, dict) else m
+            for m in raw_messages
+        ]
+        state.messages = messages
+
+    if "output" in checkpoint_data:
+        raw_output = checkpoint_data["output"]
+        if isinstance(raw_output, dict):
+            state.output = ModelOutput.model_validate(raw_output)
+        elif isinstance(raw_output, ModelOutput):
+            state.output = raw_output
+
+    if "store" in checkpoint_data:
+        for key, value in checkpoint_data["store"].items():
+            state.store.set(key, value)
+
+    if "metadata" in checkpoint_data:
+        state.metadata = checkpoint_data["metadata"]
+
+    if "completed" in checkpoint_data:
+        state._completed = checkpoint_data["completed"]
+
+    if "scores" in checkpoint_data:
+        from inspect_ai.scorer._metric import Score
+
+        raw_scores = checkpoint_data["scores"]
+        state._scores = {
+            key: Score.model_validate(val) if isinstance(val, dict) else val
+            for key, val in raw_scores.items()
+        }
+
+    if "choices" in checkpoint_data:
+        restored_choices = [
+            Choice(
+                value=c["value"],
+                correct=c.get("correct"),
+                original_position=c["original_position"],
+            )
+            for c in checkpoint_data["choices"]
+        ]
+        state.choices = Choices(restored_choices)
+
+    return state
+
+
 def sample_jsonable(sample: Sample) -> dict[str, Any]:
     jsonable = to_jsonable_python(sample, exclude_none=True, fallback=lambda _x: None)
     return cast(dict[str, Any], deepcopy(jsonable))

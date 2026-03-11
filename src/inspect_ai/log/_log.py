@@ -167,6 +167,19 @@ class EvalConfig(BaseModel):
     score_display: bool | None = Field(default=None)
     """Display scoring metrics realtime."""
 
+    checkpoint: bool | None = Field(default=None)
+    """Enable periodic Docker CRIU checkpointing for crash resumption."""
+
+    checkpoint_interval_seconds: float | None = Field(default=None)
+    """Interval in seconds between checkpoint attempts (default: 300)."""
+
+    checkpoint_dir: str | None = Field(default=None)
+    """Directory for storing CRIU checkpoint data. If not specified,
+    a subdirectory of the log directory is used."""
+
+    checkpoint_max_keep: int | None = Field(default=None)
+    """Maximum number of checkpoints to keep per sample (default: 3)."""
+
     @property
     def max_messages(self) -> int | None:
         """Deprecated max_messages property."""

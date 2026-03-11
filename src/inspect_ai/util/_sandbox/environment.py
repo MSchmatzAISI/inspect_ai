@@ -322,6 +322,58 @@ class SandboxEnvironment(abc.ABC):
                 f"Expected instance of {sandbox_cls.__name__}, got {type(self).__name__}"
             )
 
+    async def checkpoint_create(
+        self,
+        name: str,
+        checkpoint_dir: str,
+        leave_running: bool = True,
+    ) -> bool:
+        """Create a CRIU checkpoint of this sandbox's container.
+
+        Args:
+            name: Checkpoint name.
+            checkpoint_dir: Directory to store checkpoint data.
+            leave_running: If True, container continues running after checkpoint.
+
+        Returns:
+            True if checkpoint was created successfully.
+        """
+        return False
+
+    async def checkpoint_restore(
+        self,
+        name: str,
+        checkpoint_dir: str,
+    ) -> bool:
+        """Restore this sandbox's container from a CRIU checkpoint.
+
+        Args:
+            name: Checkpoint name.
+            checkpoint_dir: Directory where checkpoint data is stored.
+
+        Returns:
+            True if restore was successful.
+        """
+        return False
+
+    async def checkpoint_delete(
+        self,
+        name: str,
+        checkpoint_dir: str,
+    ) -> None:
+        """Delete a CRIU checkpoint.
+
+        Args:
+            name: Checkpoint name.
+            checkpoint_dir: Directory where checkpoint data is stored.
+        """
+        pass
+
+    @classmethod
+    def supports_checkpoint(cls) -> bool:
+        """Whether this sandbox environment supports CRIU checkpointing."""
+        return False
+
     def default_polling_interval(self) -> float:
         """Polling interval for sandbox service requests."""
         return 2
